@@ -1,0 +1,41 @@
+name: Scrape Listings
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"  # Every 6 hours
+  workflow_dispatch:       # Manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e .
+          uv run playwright install chromium --with-deps
+
+      - name: Run scraper
+        run: uv run scraper run --headless
+        env:
+          SCRAPER_HEADLESS: "true"
+
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/feed.csv state/listings.json
+          git diff --cached --quiet || git commit -m "chore: update feed $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
