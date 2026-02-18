@@ -48,6 +48,7 @@ SEARCH_CONDITION = {
     "location": {"city": CITIES},
     "listingStatus": ["Active"],
     "purchaseType": ["For Sale"],
+    "hasPicture": True,
     "propertyType": PROPERTY_TYPES,
 }
 
