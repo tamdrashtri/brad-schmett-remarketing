@@ -30,14 +30,26 @@ CITIES = [
     "Thousand Palms, CA",
 ]
 
+# All Lofty property types except Apartment
+PROPERTY_TYPES = [
+    "Single Family Home",
+    "Multi-Family",
+    "Condo",
+    "Townhouse",
+    "Manufactured Home",
+    "Vacant Land",
+    "Commercial",
+    "Farm",
+    "Residential",
+    "Other",
+]
+
 SEARCH_CONDITION = {
     "location": {"city": CITIES},
     "listingStatus": ["Active"],
     "purchaseType": ["For Sale"],
+    "propertyType": PROPERTY_TYPES,
 }
-
-# Filter out Apartment in Python (Brad wants all types except Apartment)
-EXCLUDED_PROPERTY_TYPES = {"apartment"}
 
 PAGE_SIZE = 100
 
@@ -134,7 +146,7 @@ async def _fetch_page(page: Page, page_num: int) -> list[Listing]:
                         state: l.state || 'CA',
                         zip: l.zipCode || '',
                         image: l.previewPicture || '',
-                        description: (l.detailsDescribe || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 300),
+                        description: (l.detailsDescribe || '').replace(/<[^>]*>/g, ' ').replace(/[ \t\n\r]+/g, ' ').trim().substring(0, 300),
                         detailUrl: l.detailUrl || '',
                         subdivision: l.subDivisionName || l.neighborhoodName || '',
                     })),
@@ -155,8 +167,6 @@ async def _fetch_page(page: Page, page_num: int) -> list[Listing]:
         listings = []
         for item in result.get("listings", []):
             if not item.get("id"):
-                continue
-            if item.get("propertyType", "").lower() in EXCLUDED_PROPERTY_TYPES:
                 continue
             detail_url = item["detailUrl"]
             if detail_url and not detail_url.startswith("http"):
