@@ -146,7 +146,7 @@ async def _fetch_page(page: Page, page_num: int) -> list[Listing]:
                         state: l.state || 'CA',
                         zip: l.zipCode || '',
                         image: l.previewPicture || '',
-                        description: (l.detailsDescribe || '').replace(/<[^>]*>/g, ' ').replace(/[ \t\n\r]+/g, ' ').trim().substring(0, 300),
+                        description: (l.detailsDescribe || '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().substring(0, 300),
                         detailUrl: l.detailUrl || '',
                         subdivision: l.subDivisionName || l.neighborhoodName || '',
                     })),
