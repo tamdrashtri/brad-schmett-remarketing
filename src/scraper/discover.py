@@ -34,13 +34,15 @@ SEARCH_CONDITION = {
     "location": {"city": CITIES},
     "listingStatus": ["Active"],
     "purchaseType": ["For Sale"],
-    "hasPicture": True,
     "propertyType": [
         "Single Family Home",
         "Multi-Family",
         "Condo",
         "Townhouse",
         "Manufactured Home",
+        "Land",
+        "Commercial",
+        "Farm",
     ],
 }
 
