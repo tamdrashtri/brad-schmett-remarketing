@@ -34,17 +34,10 @@ SEARCH_CONDITION = {
     "location": {"city": CITIES},
     "listingStatus": ["Active"],
     "purchaseType": ["For Sale"],
-    "propertyType": [
-        "Single Family Home",
-        "Multi-Family",
-        "Condo",
-        "Townhouse",
-        "Manufactured Home",
-        "Land",
-        "Commercial",
-        "Farm",
-    ],
 }
+
+# Filter out Apartment in Python (Brad wants all types except Apartment)
+EXCLUDED_PROPERTY_TYPES = {"apartment"}
 
 PAGE_SIZE = 100
 
@@ -162,6 +155,8 @@ async def _fetch_page(page: Page, page_num: int) -> list[Listing]:
         listings = []
         for item in result.get("listings", []):
             if not item.get("id"):
+                continue
+            if item.get("propertyType", "").lower() in EXCLUDED_PROPERTY_TYPES:
                 continue
             detail_url = item["detailUrl"]
             if detail_url and not detail_url.startswith("http"):
