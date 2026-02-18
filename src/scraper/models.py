@@ -76,7 +76,7 @@ class FeedRow(BaseModel):
             city_name=listing.city.split(",")[0].strip() if listing.city else "",
             property_type=listing.property_type,
             address=listing.address,
-            description=listing.description[:150] if listing.description else "",
+            description=listing.description.replace("\n", " ").replace("\r", " ").strip()[:150] if listing.description else "",
             contextual_keywords=", ".join(keywords),
         )
 
