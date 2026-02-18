@@ -159,7 +159,7 @@ async def _fetch_page(page: Page, page_num: int) -> list[Listing]:
 
         listings = []
         for item in result.get("listings", []):
-            if not item.get("mlsId"):
+            if not item.get("id"):
                 continue
             detail_url = item["detailUrl"]
             if detail_url and not detail_url.startswith("http"):
@@ -168,6 +168,7 @@ async def _fetch_page(page: Page, page_num: int) -> list[Listing]:
             listings.append(
                 Listing(
                     url=detail_url,
+                    lofty_id=str(item["id"]),
                     mls_id=item["mlsId"],
                     price=item["price"],
                     bedrooms=item["bedrooms"],

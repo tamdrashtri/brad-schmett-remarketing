@@ -9,6 +9,7 @@ class Listing(BaseModel):
     """Raw scraped listing data."""
 
     url: str
+    lofty_id: str = ""
     mls_id: str = ""
     address: str = ""
     city: str = ""
@@ -68,7 +69,7 @@ class FeedRow(BaseModel):
             keywords.append(f"{listing.sqft} sqft")
 
         return cls(
-            listing_id=listing.mls_id,
+            listing_id=listing.lofty_id,
             listing_name=listing.listing_name,
             final_url=listing.url,
             image_url=listing.image_url,
