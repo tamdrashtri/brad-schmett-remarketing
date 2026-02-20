@@ -7,19 +7,35 @@ from loguru import logger
 from scraper.config import settings
 from scraper.models import FeedRow, Listing
 
+# Google Ads requires Title Case headers with spaces
 FEED_COLUMNS = [
-    "listing_id",
-    "listing_name",
-    "final_url",
-    "image_url",
-    "price",
-    "city_name",
-    "property_type",
-    "listing_type",
-    "address",
-    "description",
-    "contextual_keywords",
+    "Listing ID",
+    "Listing name",
+    "Final URL",
+    "Image URL",
+    "Price",
+    "City name",
+    "Property type",
+    "Listing type",
+    "Address",
+    "Description",
+    "Contextual keywords",
 ]
+
+# Map from FeedRow field names to Google Ads header names
+_FIELD_TO_HEADER = {
+    "listing_id": "Listing ID",
+    "listing_name": "Listing name",
+    "final_url": "Final URL",
+    "image_url": "Image URL",
+    "price": "Price",
+    "city_name": "City name",
+    "property_type": "Property type",
+    "listing_type": "Listing type",
+    "address": "Address",
+    "description": "Description",
+    "contextual_keywords": "Contextual keywords",
+}
 
 
 def write_feed(listings: list[Listing]) -> int:
@@ -37,7 +53,9 @@ def write_feed(listings: list[Listing]) -> int:
         writer.writeheader()
         for listing in active:
             row = FeedRow.from_listing(listing)
-            writer.writerow(row.model_dump())
+            # Remap snake_case keys to Google Ads Title Case headers
+            mapped = {_FIELD_TO_HEADER[k]: v for k, v in row.model_dump().items()}
+            writer.writerow(mapped)
 
     logger.info("Wrote {} rows to {}", len(active), path)
     return len(active)

@@ -34,15 +34,24 @@ class Listing(BaseModel):
 
     @property
     def listing_name(self) -> str:
-        """Human-readable name for feed: '3BR Condo in Palm Desert'."""
+        """Human-readable name for feed, max 25 chars per Google Ads spec."""
+        city_short = self.city.split(",")[0].strip() if self.city else ""
+        # Try full format: "3BR Condo in Palm Desert"
         parts = []
-        if self.bedrooms:
+        if self.bedrooms and self.bedrooms > 0:
             parts.append(f"{self.bedrooms}BR")
         if self.property_type:
             parts.append(self.property_type)
-        if self.city:
-            parts.append(f"in {self.city.split(',')[0].strip()}")
-        return " ".join(parts) if parts else self.address
+        if city_short:
+            parts.append(f"in {city_short}")
+        name = " ".join(parts) if parts else self.address
+        # Truncate to 25 chars — drop city first, then property type
+        if len(name) > 25 and city_short:
+            parts_no_city = [p for p in parts if not p.startswith("in ")]
+            name = " ".join(parts_no_city) if parts_no_city else self.address
+        if len(name) > 25:
+            name = name[:25]
+        return name or self.address[:25]
 
 
 class FeedRow(BaseModel):
@@ -65,8 +74,12 @@ class FeedRow(BaseModel):
         keywords = []
         if listing.subdivision:
             keywords.append(listing.subdivision)
-        if listing.sqft:
+        if listing.sqft and listing.sqft > 0:
             keywords.append(f"{listing.sqft} sqft")
+
+        desc = ""
+        if listing.description:
+            desc = listing.description.replace("\n", " ").replace("\r", " ").strip()[:25]
 
         return cls(
             listing_id=listing.lofty_id,
@@ -74,11 +87,11 @@ class FeedRow(BaseModel):
             final_url=listing.url,
             image_url=listing.image_url,
             price=f"{listing.price:.2f} USD",
-            city_name=listing.city.split(",")[0].strip() if listing.city else "",
+            city_name=listing.city.split(",")[0].strip()[:25] if listing.city else "",
             property_type=listing.property_type,
             address=listing.address,
-            description=listing.description.replace("\n", " ").replace("\r", " ").strip()[:150] if listing.description else "",
-            contextual_keywords=", ".join(keywords),
+            description=desc,
+            contextual_keywords="; ".join(keywords),
         )
 
 
