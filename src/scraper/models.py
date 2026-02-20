@@ -86,7 +86,7 @@ class FeedRow(BaseModel):
             listing_name=listing.listing_name,
             final_url=listing.url,
             image_url=listing.image_url,
-            price=f"{listing.price:.2f} USD",
+            price=f"${int(listing.price):,}" if listing.price == int(listing.price) else f"${listing.price:,.2f}",
             city_name=listing.city.split(",")[0].strip()[:25] if listing.city else "",
             property_type=listing.property_type,
             address=f"{listing.address}, {listing.city}, {listing.state}" if listing.address and listing.city else listing.address,
