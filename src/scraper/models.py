@@ -89,7 +89,7 @@ class FeedRow(BaseModel):
             price=f"{listing.price:.2f} USD",
             city_name=listing.city.split(",")[0].strip()[:25] if listing.city else "",
             property_type=listing.property_type,
-            address=listing.address,
+            address=f"{listing.address}, {listing.city}, {listing.state}" if listing.address and listing.city else listing.address,
             description=desc,
             contextual_keywords="; ".join(keywords),
         )
