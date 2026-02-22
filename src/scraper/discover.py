@@ -12,6 +12,7 @@ from playwright.async_api import Page
 
 from scraper.browser import StealthBrowser, human_delay
 from scraper.config import settings
+from scraper.extract import decode_chime_image_url
 from scraper.models import Listing
 
 # All cities Brad covers in the Coachella Valley
@@ -186,7 +187,7 @@ async def _fetch_page(page: Page, page_num: int) -> list[Listing]:
                     status=item["status"] or "Active",
                     address=item["street"],
                     city=f"{item['city']}, {item['state']} {item['zip']}".strip(),
-                    image_url=item["image"],
+                    image_url=decode_chime_image_url(item["image"]),
                     description=item["description"],
                     subdivision=item["subdivision"],
                 )

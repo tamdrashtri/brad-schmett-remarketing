@@ -1,13 +1,54 @@
 """Extract listing data from a detail page: JSON-LD first, DOM fallback."""
 
+import base64
 import json
 import re
+import zlib
 
 from loguru import logger
 from playwright.async_api import Page
 
 from scraper.browser import human_delay
 from scraper.models import Listing
+
+
+def decode_chime_image_url(chime_url: str) -> str:
+    """Decode an img.chime.me imageemb URL to its underlying stable CDN URL.
+
+    Lofty/Chime wraps MLS photos in a proxy URL of the form:
+        https://img.chime.me/imageemb/mls-listing/{id1}/{id2}/{hash}/{ts}/original_{token}.jpg
+
+    The {token} segment is a URL-safe base64-encoded raw-deflate (no zlib header)
+    compressed string containing the actual photo URL, typically on
+    cdn.photos.sparkplatform.com.  These sparkplatform URLs are permanent CDN
+    assets (filename is the upload timestamp, not an expiry token).
+
+    The img.chime.me proxy enforces hotlink protection and returns 403 for
+    external fetchers regardless of Referer, making it unusable for Google Ads
+    image feeds.  The decoded sparkplatform URLs return 200 with no auth.
+
+    Returns the decoded URL if decoding succeeds, or the original chime_url
+    unchanged so callers always get a non-empty string.
+    """
+    if not chime_url or "img.chime.me" not in chime_url:
+        return chime_url
+    try:
+        # Split on 'original_' to isolate the token, strip trailing .jpg
+        parts = chime_url.rstrip(".jpg").split("original_", 1)
+        if len(parts) != 2:
+            return chime_url
+        token = parts[1]
+        # URL-safe base64 -> standard base64
+        token_std = token.replace("-", "+").replace("_", "/")
+        # Pad to 4-byte boundary
+        token_std += "=" * (4 - len(token_std) % 4)
+        compressed = base64.b64decode(token_std)
+        # Raw deflate (wbits=-15 skips the zlib header)
+        decoded_url = zlib.decompress(compressed, -15).decode("utf-8")
+        return decoded_url
+    except Exception as e:
+        logger.debug("Failed to decode chime image URL {}: {}", chime_url, e)
+        return chime_url
 
 
 async def extract_listing(page: Page, url: str) -> Listing | None:
@@ -37,7 +78,7 @@ async def extract_listing(page: Page, url: str) -> Listing | None:
         jsonld = await _extract_jsonld(page)
         if jsonld:
             listing.price = _parse_price(jsonld.get("offers", {}).get("price", ""))
-            listing.image_url = jsonld.get("image", "")
+            listing.image_url = decode_chime_image_url(jsonld.get("image", ""))
             # JSON-LD name often has duplicated city — prefer DOM address below
             name = jsonld.get("name", "")
 
@@ -83,7 +124,7 @@ async def extract_listing(page: Page, url: str) -> Listing | None:
             listing.price = _parse_price(dom.get("price"))
 
         if not listing.image_url:
-            listing.image_url = dom.get("image", "")
+            listing.image_url = decode_chime_image_url(dom.get("image", ""))
 
         if dom.get("description"):
             listing.description = dom["description"]
