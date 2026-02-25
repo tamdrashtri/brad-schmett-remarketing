@@ -51,6 +51,19 @@ def decode_chime_image_url(chime_url: str) -> str:
         return chime_url
 
 
+def optimize_image_url(url: str) -> str:
+    """Wrap image URL with wsrv.nl proxy to guarantee Google Ads file size compliance.
+
+    Decodes chime proxy URLs first for stable CDN source, then wraps with
+    wsrv.nl for resize to 1200px wide JPEG at quality 80 (~100-200KB output).
+    """
+    if not url:
+        return url
+    decoded = decode_chime_image_url(url)
+    from urllib.parse import quote
+    return f"https://wsrv.nl/?url={quote(decoded, safe='')}&w=1200&output=jpg&q=80"
+
+
 async def extract_listing(page: Page, url: str) -> Listing | None:
     """Navigate to a listing page and extract all fields."""
     try:
@@ -78,7 +91,7 @@ async def extract_listing(page: Page, url: str) -> Listing | None:
         jsonld = await _extract_jsonld(page)
         if jsonld:
             listing.price = _parse_price(jsonld.get("offers", {}).get("price", ""))
-            listing.image_url = decode_chime_image_url(jsonld.get("image", ""))
+            listing.image_url = optimize_image_url(jsonld.get("image", ""))
             # JSON-LD name often has duplicated city — prefer DOM address below
             name = jsonld.get("name", "")
 
@@ -124,7 +137,7 @@ async def extract_listing(page: Page, url: str) -> Listing | None:
             listing.price = _parse_price(dom.get("price"))
 
         if not listing.image_url:
-            listing.image_url = decode_chime_image_url(dom.get("image", ""))
+            listing.image_url = optimize_image_url(dom.get("image", ""))
 
         if dom.get("description"):
             listing.description = dom["description"]

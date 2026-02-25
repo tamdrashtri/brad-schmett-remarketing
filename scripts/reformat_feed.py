@@ -42,6 +42,16 @@ def decode_chime_image_url(chime_url: str) -> str:
     except Exception:
         return chime_url
 
+
+def optimize_image_url(url: str) -> str:
+    """Wrap image URL with wsrv.nl proxy to guarantee Google Ads file size compliance."""
+    if not url:
+        return url
+    decoded = decode_chime_image_url(url)
+    from urllib.parse import quote
+    return f"https://wsrv.nl/?url={quote(decoded, safe='')}&w=1200&output=jpg&q=80"
+
+
 FEED_PATH = Path(__file__).resolve().parent.parent / "docs" / "feed.csv"
 OUTPUT_PATH = FEED_PATH  # overwrite in place
 
@@ -151,7 +161,7 @@ def main():
                 "Listing ID": _get(row, "listing_id", "Listing ID"),
                 "Listing name": truncate_listing_name(name),
                 "Final URL": _get(row, "final_url", "Final URL"),
-                "Image URL": decode_chime_image_url(_get(row, "image_url", "Image URL")),
+                "Image URL": optimize_image_url(_get(row, "image_url", "Image URL")),
                 "Price": format_price(_get(row, "price", "Price")),
                 "City name": city[:25],
                 "Property type": _get(row, "property_type", "Property type"),
