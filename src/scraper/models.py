@@ -80,6 +80,9 @@ class FeedRow(BaseModel):
         desc = ""
         if listing.description:
             desc = listing.description.replace("\n", " ").replace("\r", " ").strip()[:25]
+            # Google disapproves excessive capitalization — title case if >50% uppercase
+            if desc and sum(1 for c in desc if c.isupper()) > len(desc) * 0.5:
+                desc = desc.title()
 
         return cls(
             listing_id=listing.lofty_id,
