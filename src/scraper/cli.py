@@ -6,11 +6,17 @@ import sys
 import typer
 from loguru import logger
 
-from scraper.browser import StealthBrowser
+from scraper.browser import StealthBrowser, human_delay
 from scraper.config import settings
 from scraper.discover import discover_and_extract
 from scraper.extract import extract_listing
 from scraper.feed import write_feed
+from scraper.images import (
+    cleanup_stale_images,
+    download_images,
+    needs_download,
+    self_hosted_url,
+)
 from scraper.models import Listing
 from scraper.state import StateManager
 
@@ -47,6 +53,45 @@ async def _run_pipeline() -> None:
         if not listings:
             logger.error("No listings found")
             raise typer.Exit(1)
+
+        # Download cotality/corelogic auth-protected images
+        cotality_listings = [l for l in listings if needs_download(l)]
+        if cotality_listings:
+            logger.info(
+                "{}/{} listings need cotality image download",
+                len(cotality_listings),
+                len(listings),
+            )
+            # Create a new context and establish session cookies
+            ctx = await browser.new_context()
+            page = await ctx.new_page()
+            # Visit a listing page to prime img.chime.me cookies in the context
+            # (featured-listing loads thumbnail images from chime CDN)
+            await page.goto(
+                f"{settings.base_url}/featured-listing",
+                wait_until="networkidle",
+                timeout=60_000,
+            )
+            await human_delay(1.0)
+            # Close the session page — download_images creates its own pages
+            await page.close()
+
+            downloaded = await download_images(ctx, cotality_listings)
+            logger.info("Downloaded {} new images", downloaded)
+            await ctx.close()
+
+            # Replace image URLs with self-hosted GitHub Pages URLs for downloaded images
+            from scraper.images import IMAGES_DIR
+
+            for listing in listings:
+                if needs_download(listing) and (
+                    IMAGES_DIR / f"{listing.lofty_id}.jpg"
+                ).exists():
+                    listing.image_url = self_hosted_url(listing.lofty_id)
+
+        # Clean up images for delisted properties
+        active_ids = {l.lofty_id for l in listings}
+        cleanup_stale_images(active_ids)
 
         # Update state
         for listing in listings:

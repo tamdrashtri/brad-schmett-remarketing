@@ -36,6 +36,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/feed.csv state/listings.json
+          git add docs/feed.csv docs/images/ state/listings.json
           git diff --cached --quiet || git commit -m "chore: update feed $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push
