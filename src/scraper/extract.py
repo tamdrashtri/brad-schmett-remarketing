@@ -54,14 +54,21 @@ def decode_chime_image_url(chime_url: str) -> str:
 def optimize_image_url(url: str) -> str:
     """Wrap image URL with wsrv.nl proxy to guarantee Google Ads file size compliance.
 
-    Decodes chime proxy URLs first for stable CDN source, then wraps with
-    wsrv.nl for resize to 1200px wide JPEG at quality 80 (~100-200KB output).
+    Only applies wsrv.nl resize for sparkplatform CDN URLs (publicly accessible).
+    Cotality/CoreLogic Trestle URLs are auth-protected and can't be fetched by
+    wsrv.nl, so those fall back to the original img.chime.me proxy URL which
+    Google's Ads image crawler can access directly.
     """
     if not url:
         return url
     decoded = decode_chime_image_url(url)
-    from urllib.parse import quote
-    return f"https://wsrv.nl/?url={quote(decoded, safe='')}&w=1200&output=jpg&q=80"
+    # Only wrap with wsrv.nl if the decoded URL is a publicly-accessible CDN
+    if "sparkplatform.com" in decoded:
+        from urllib.parse import quote
+        return f"https://wsrv.nl/?url={quote(decoded, safe='')}&w=1200&output=jpg&q=80"
+    # For cotality/corelogic/other auth-protected sources, use original URL
+    # Google's image crawler can fetch from img.chime.me directly
+    return url
 
 
 async def extract_listing(page: Page, url: str) -> Listing | None:
