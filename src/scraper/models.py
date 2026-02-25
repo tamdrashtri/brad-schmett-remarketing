@@ -1,5 +1,7 @@
 """Pydantic models for listings and feed rows."""
 
+import html
+import re
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -79,9 +81,15 @@ class FeedRow(BaseModel):
 
         desc = ""
         if listing.description:
-            desc = listing.description.replace("\n", " ").replace("\r", " ").strip()[:25]
-            # Google disapproves excessive capitalization — title case if >50% uppercase
-            if desc and sum(1 for c in desc if c.isupper()) > len(desc) * 0.5:
+            desc = listing.description.replace("\n", " ").replace("\r", " ").strip()
+            # Decode HTML entities (&#128160; etc.) and strip non-ASCII
+            desc = html.unescape(desc)
+            desc = re.sub(r"[^\x20-\x7E]", "", desc).strip()
+            desc = desc[:25]
+            # Google disapproves excessive capitalization — check alpha chars only
+            # (spaces/digits/punctuation dilute the ratio with the old check)
+            alpha = [c for c in desc if c.isalpha()]
+            if alpha and sum(1 for c in alpha if c.isupper()) > len(alpha) * 0.3:
                 desc = desc.title()
 
         return cls(
