@@ -4,6 +4,9 @@ img.chime.me enforces hotlink protection — context.request.get() sends bare
 HTTP requests without browser-level Referer/Cookie headers, so it gets 403.
 Instead, we use page.goto() which navigates the real browser to the image URL,
 inheriting all session cookies and sending proper headers.
+
+Rate limiting: img.chime.me returns 429 after ~400 rapid requests.
+We throttle with per-request delay + exponential backoff on 429.
 """
 
 import asyncio
@@ -17,6 +20,11 @@ from scraper.models import Listing
 
 IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / "docs" / "images"
 PAGES_BASE = "https://tamdrashtri.github.io/brad-schmett-remarketing/images"
+
+# Rate limiting: delay between requests per worker, max retries on 429
+REQUEST_DELAY = 0.5  # seconds between requests per worker
+MAX_RETRIES = 3
+BACKOFF_BASE = 5.0  # seconds, doubles each retry
 
 
 def needs_download(listing: Listing) -> bool:
@@ -32,8 +40,7 @@ def needs_download(listing: Listing) -> bool:
     if "img.chime.me" in url:
         decoded = decode_chime_image_url(url)
         return "sparkplatform.com" not in decoded
-    # Catch direct cotality/corelogic URLs (shouldn't happen with current
-    # optimize_image_url, but defensive)
+    # Catch direct cotality/corelogic URLs (defensive)
     if "cotality.com" in url or "corelogic.com" in url or "crmls.org" in url:
         return True
     return False
@@ -44,13 +51,15 @@ def self_hosted_url(lofty_id: str) -> str:
 
 
 async def download_images(
-    context: BrowserContext, listings: list[Listing], concurrency: int = 5
+    context: BrowserContext, listings: list[Listing], concurrency: int = 3
 ) -> int:
     """Download auth-protected images using browser page navigation.
 
     Uses page.goto() instead of context.request.get() because img.chime.me
     rejects bare HTTP requests (403). Page navigation sends proper browser
     headers, cookies, and Referer automatically.
+
+    Includes per-request throttling and exponential backoff on 429 responses.
     """
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -84,35 +93,64 @@ async def download_images(
                 listing = queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-            try:
-                response = await page.goto(
-                    listing.image_url,
-                    wait_until="load",
-                    timeout=15000,
-                )
-                if response and response.ok:
-                    body = await response.body()
-                    if len(body) > 1000:  # skip broken/empty responses
-                        (IMAGES_DIR / f"{listing.lofty_id}.jpg").write_bytes(body)
-                        count += 1
-                    else:
-                        logger.warning(
-                            "Image too small for {} ({} bytes)",
-                            listing.lofty_id,
-                            len(body),
-                        )
-                        errors += 1
-                else:
-                    status = response.status if response else "no response"
-                    logger.warning(
-                        "Image download HTTP {} for {}", status, listing.lofty_id
+
+            success = False
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    response = await page.goto(
+                        listing.image_url,
+                        wait_until="load",
+                        timeout=15000,
                     )
-                    errors += 1
-            except Exception as e:
-                logger.warning("Image download failed for {}: {}", listing.lofty_id, e)
+                    if response and response.ok:
+                        body = await response.body()
+                        if len(body) > 1000:
+                            (IMAGES_DIR / f"{listing.lofty_id}.jpg").write_bytes(body)
+                            count += 1
+                            success = True
+                        else:
+                            logger.warning(
+                                "Image too small for {} ({} bytes)",
+                                listing.lofty_id,
+                                len(body),
+                            )
+                        break  # Don't retry on success or small image
+                    elif response and response.status == 429:
+                        if attempt < MAX_RETRIES:
+                            wait = BACKOFF_BASE * (2**attempt)
+                            logger.info(
+                                "Rate limited, waiting {}s (attempt {}/{})",
+                                wait,
+                                attempt + 1,
+                                MAX_RETRIES,
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        else:
+                            logger.warning(
+                                "Rate limited after {} retries for {}",
+                                MAX_RETRIES,
+                                listing.lofty_id,
+                            )
+                            break
+                    else:
+                        status = response.status if response else "no response"
+                        logger.warning(
+                            "Image download HTTP {} for {}", status, listing.lofty_id
+                        )
+                        break  # Don't retry on non-429 errors
+                except Exception as e:
+                    logger.warning(
+                        "Image download failed for {}: {}", listing.lofty_id, e
+                    )
+                    break
+
+            if not success:
                 errors += 1
-            finally:
-                queue.task_done()
+
+            # Throttle between requests to avoid rate limiting
+            await asyncio.sleep(REQUEST_DELAY)
+            queue.task_done()
 
     # Run workers concurrently — each page handles items from the queue
     await asyncio.gather(*[_worker(p) for p in pages])
