@@ -1,15 +1,17 @@
 """Download auth-protected listing images and self-host on GitHub Pages.
 
-img.chime.me enforces hotlink protection — context.request.get() sends bare
-HTTP requests without browser-level Referer/Cookie headers, so it gets 403.
-Instead, we use page.goto() which navigates the real browser to the image URL,
-inheriting all session cookies and sending proper headers.
+img.chime.me enforces hotlink protection — bare HTTP requests get 403.
+We use page.goto() which sends proper browser headers and cookies.
 
-Rate limiting: img.chime.me returns 429 after ~400 rapid requests.
-We throttle with per-request delay + exponential backoff on 429.
+Rate limiting strategy (based on observed ~400 req/5min limit):
+- 2 workers with 1.5s + random jitter delay (~40-50 req/min total)
+- Global pause on 429: ALL workers stop (CDN rate limits are IP-based)
+- Exponential backoff with jitter on retries
+- Respects Retry-After header when present
 """
 
 import asyncio
+import random
 from pathlib import Path
 
 from loguru import logger
@@ -21,26 +23,27 @@ from scraper.models import Listing
 IMAGES_DIR = Path(__file__).resolve().parent.parent.parent / "docs" / "images"
 PAGES_BASE = "https://tamdrashtri.github.io/brad-schmett-remarketing/images"
 
-# Rate limiting: delay between requests per worker, max retries on 429
-REQUEST_DELAY = 0.5  # seconds between requests per worker
-MAX_RETRIES = 3
-BACKOFF_BASE = 5.0  # seconds, doubles each retry
+# Rate limiting tuning
+CONCURRENCY = 2
+BASE_DELAY = 1.5  # seconds between requests per worker
+JITTER_RANGE = 1.0  # random 0-1s added to base delay
+MAX_RETRIES = 4
+BACKOFF_RANGES = [  # (min, max) seconds for each retry attempt
+    (5, 15),
+    (15, 45),
+    (45, 120),
+    (120, 300),
+]
 
 
 def needs_download(listing: Listing) -> bool:
-    """Check if this listing's image is from an auth-protected CDN.
-
-    After optimize_image_url(), cotality/corelogic listings retain their
-    original img.chime.me proxy URL (only sparkplatform gets wsrv.nl wrapped).
-    """
+    """Check if this listing's image is from an auth-protected CDN."""
     url = listing.image_url
     if not url:
         return False
-    # Catch img.chime.me URLs that decode to non-sparkplatform sources
     if "img.chime.me" in url:
         decoded = decode_chime_image_url(url)
         return "sparkplatform.com" not in decoded
-    # Catch direct cotality/corelogic URLs (defensive)
     if "cotality.com" in url or "corelogic.com" in url or "crmls.org" in url:
         return True
     return False
@@ -50,17 +53,18 @@ def self_hosted_url(lofty_id: str) -> str:
     return f"{PAGES_BASE}/{lofty_id}.jpg"
 
 
+# Global rate limit event — when set, ALL workers pause
+_rate_limit_event: asyncio.Event | None = None
+
+
 async def download_images(
-    context: BrowserContext, listings: list[Listing], concurrency: int = 3
+    context: BrowserContext, listings: list[Listing], concurrency: int = CONCURRENCY
 ) -> int:
-    """Download auth-protected images using browser page navigation.
+    """Download auth-protected images using browser page navigation."""
+    global _rate_limit_event
+    _rate_limit_event = asyncio.Event()
+    _rate_limit_event.set()  # Start unblocked
 
-    Uses page.goto() instead of context.request.get() because img.chime.me
-    rejects bare HTTP requests (403). Page navigation sends proper browser
-    headers, cookies, and Referer automatically.
-
-    Includes per-request throttling and exponential backoff on 429 responses.
-    """
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
     pending = [
@@ -74,7 +78,7 @@ async def download_images(
 
     logger.info("Downloading {} cotality images (concurrency={})", len(pending), concurrency)
 
-    # Create a pool of pages for concurrent downloads
+    # Create worker pages
     pages = []
     for _ in range(concurrency):
         pages.append(await context.new_page())
@@ -86,9 +90,12 @@ async def download_images(
     count = 0
     errors = 0
 
-    async def _worker(page) -> None:
+    async def _worker(page, worker_id: int) -> None:
         nonlocal count, errors
         while not queue.empty():
+            # Wait if global rate limit pause is active
+            await _rate_limit_event.wait()
+
             try:
                 listing = queue.get_nowait()
             except asyncio.QueueEmpty:
@@ -96,10 +103,13 @@ async def download_images(
 
             success = False
             for attempt in range(MAX_RETRIES + 1):
+                # Re-check rate limit before each attempt
+                await _rate_limit_event.wait()
+
                 try:
                     response = await page.goto(
                         listing.image_url,
-                        wait_until="load",
+                        wait_until="commit",
                         timeout=15000,
                     )
                     if response and response.ok:
@@ -114,21 +124,37 @@ async def download_images(
                                 listing.lofty_id,
                                 len(body),
                             )
-                        break  # Don't retry on success or small image
+                        break
                     elif response and response.status == 429:
+                        # Extract Retry-After if present
+                        retry_after = response.headers.get("retry-after")
                         if attempt < MAX_RETRIES:
-                            wait = BACKOFF_BASE * (2**attempt)
-                            logger.info(
-                                "Rate limited, waiting {}s (attempt {}/{})",
-                                wait,
-                                attempt + 1,
-                                MAX_RETRIES,
-                            )
+                            if retry_after:
+                                wait = float(retry_after)
+                                logger.info(
+                                    "W{}: Rate limited, server says wait {}s",
+                                    worker_id,
+                                    wait,
+                                )
+                            else:
+                                lo, hi = BACKOFF_RANGES[attempt]
+                                wait = random.uniform(lo, hi)
+                                logger.info(
+                                    "W{}: Rate limited, backing off {:.0f}s (attempt {}/{})",
+                                    worker_id,
+                                    wait,
+                                    attempt + 1,
+                                    MAX_RETRIES,
+                                )
+                            # Global pause — block ALL workers
+                            _rate_limit_event.clear()
                             await asyncio.sleep(wait)
+                            _rate_limit_event.set()
                             continue
                         else:
                             logger.warning(
-                                "Rate limited after {} retries for {}",
+                                "W{}: Rate limited after {} retries for {}",
+                                worker_id,
                                 MAX_RETRIES,
                                 listing.lofty_id,
                             )
@@ -136,26 +162,25 @@ async def download_images(
                     else:
                         status = response.status if response else "no response"
                         logger.warning(
-                            "Image download HTTP {} for {}", status, listing.lofty_id
+                            "W{}: HTTP {} for {}", worker_id, status, listing.lofty_id
                         )
-                        break  # Don't retry on non-429 errors
+                        break
                 except Exception as e:
                     logger.warning(
-                        "Image download failed for {}: {}", listing.lofty_id, e
+                        "W{}: Failed for {}: {}", worker_id, listing.lofty_id, e
                     )
                     break
 
             if not success:
                 errors += 1
 
-            # Throttle between requests to avoid rate limiting
-            await asyncio.sleep(REQUEST_DELAY)
+            # Throttle: base delay + random jitter
+            delay = BASE_DELAY + random.uniform(0, JITTER_RANGE)
+            await asyncio.sleep(delay)
             queue.task_done()
 
-    # Run workers concurrently — each page handles items from the queue
-    await asyncio.gather(*[_worker(p) for p in pages])
+    await asyncio.gather(*[_worker(p, i) for i, p in enumerate(pages)])
 
-    # Clean up pages
     for p in pages:
         await p.close()
 
